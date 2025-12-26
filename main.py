@@ -1,6 +1,27 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from database import get_conn
+# connection_manager.py
+from fastapi import WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections = {}  # username -> websocket
+
+    async def connect(self, username: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[username] = websocket
+
+    def disconnect(self, username: str):
+        self.active_connections.pop(username, None)
+
+    async def send_to_user(self, username: str, data: dict):
+        ws = self.active_connections.get(username)
+        if ws:
+            await ws.send_json(data)
+manager = ConnectionManager()
+
 
 app = FastAPI()
 
@@ -27,9 +48,9 @@ def signup(user: User):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("INSERT INTO users (username, password) VALUES (%s, %s)", 
+    cur.execute("INSERT INTO users (username, password) VALUES (%s, %s)",
                 (user.username, user.password))
-    
+
     conn.commit()
     cur.close()
     conn.close()
@@ -45,7 +66,7 @@ def login(user: User):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT username, password FROM users WHERE username=%s", 
+    cur.execute("SELECT username, password FROM users WHERE username=%s",
                 (user.username,))
     result = cur.fetchone()
 
@@ -62,20 +83,30 @@ def login(user: User):
 # SEND MESSAGE
 # ------------------------
 @app.post("/send")
-def send_message(msg: Message):
+async def send_message(msg: Message):
     conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
-        "INSERT INTO messages (sender, receiver, message) VALUES (%s, %s, %s)",
+        "INSERT INTO messages (sender, receiver, message) VALUES (%s, %s, %s) RETURNING id",
         (msg.sender, msg.receiver, msg.message)
     )
-
+    message_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
 
-    return {"message": "Message sent"}
+    message_data = {
+        "id": message_id,
+        "sender": msg.sender,
+        "receiver": msg.receiver,
+        "message": msg.message
+    }
+
+    # Send real-time update if receiver is online
+    await manager.send_to_user(msg.receiver, {"type": "new_message", "message": message_data})
+
+    return {"message": "Message sent", "id": message_id}
 
 
 # ------------------------
@@ -90,7 +121,7 @@ def get_messages(data: dict):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, sender, receiver, message 
+        SELECT id, sender, receiver, message
         FROM messages
         WHERE (sender=%s AND receiver=%s)
            OR (sender=%s AND receiver=%s)
@@ -176,3 +207,12 @@ def init_db():
     conn.close()
 
     return {"status": "initialized"}
+
+@app.websocket("/ws/{username}")
+async def websocket_endpoint(websocket: WebSocket, username: str):
+    await manager.connect(username, websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keeps connection alive
+    except WebSocketDisconnect:
+        manager.disconnect(username)
