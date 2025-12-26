@@ -150,3 +150,29 @@ def search_users(q: str):
     conn.close()
 
     return [row[0] for row in results]
+
+@app.get("/init")
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE,
+        password TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender TEXT,
+        receiver TEXT,
+        message TEXT
+    );
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"status": "initialized"}
