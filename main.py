@@ -87,7 +87,7 @@ def get_messages(data: dict):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        SELECT id, sender, receiver, message,time_sent
+        SELECT id, sender, receiver, message,sent_time
         FROM messages
         WHERE (sender=%s AND receiver=%s)
            OR (sender=%s AND receiver=%s)
