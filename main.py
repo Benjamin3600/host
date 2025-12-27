@@ -59,7 +59,7 @@ def send_message(msg: Message):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO messages (sender, receiver, message) VALUES (%s, %s, %s, %s) RETURNING id",
+        "INSERT INTO messages (sender, receiver, message) VALUES (%s, %s, %s) RETURNING id",
         (msg.sender, msg.receiver, msg.message)
     )
     message_id = cur.fetchone()[0]
