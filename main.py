@@ -110,8 +110,8 @@ def delete_message(item: DeleteMsg):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "DELETE FROM messages WHERE id=%s AND sender=%s",
-        (item.id, item.username)
+        "DELETE FROM messages WHERE id=%s",
+        (item.id,)
     )
     conn.commit()
     cur.close()
