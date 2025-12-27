@@ -59,7 +59,7 @@ def send_message(msg: Message):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO messages (sender, receiver, message) VALUES (%s, %s, %s) RETURNING id",
+        "INSERT INTO messages (sender, receiver, message) VALUES (%s, %s, %s, %s) RETURNING id",
         (msg.sender, msg.receiver, msg.message)
     )
     message_id = cur.fetchone()[0]
@@ -87,7 +87,7 @@ def get_messages(data: dict):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        SELECT id, sender, receiver, message
+        SELECT id, sender, receiver, message,time_sent
         FROM messages
         WHERE (sender=%s AND receiver=%s)
            OR (sender=%s AND receiver=%s)
@@ -98,7 +98,7 @@ def get_messages(data: dict):
     conn.close()
 
     messages = [
-        {"id": row[0], "sender": row[1], "receiver": row[2], "message": row[3]}
+        {"id": row[0], "sender": row[1], "receiver": row[2], "message": row[3], "sent_time": row[4].isoformat()}
         for row in rows
     ]
     return messages
@@ -152,7 +152,8 @@ def init_db():
             id SERIAL PRIMARY KEY,
             sender TEXT,
             receiver TEXT,
-            message TEXT
+            message TEXT,
+            sent_time TIMESTAMP DEFAULT NOW()
         );
     """)
     conn.commit()
