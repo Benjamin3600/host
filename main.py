@@ -160,3 +160,16 @@ def init_db():
     cur.close()
     conn.close()
     return {"status": "initialized"}
+
+@app.get("/add")
+def add_sent_time():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS sent_time TIMESTAMP DEFAULT NOW();
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"status": "column added"}
