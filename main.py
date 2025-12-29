@@ -109,14 +109,22 @@ def get_messages(data: dict):
 def delete_message(item: DeleteMsg):
     conn = get_conn()
     cur = conn.cursor()
+
     cur.execute(
-        "DELETE FROM messages WHERE id=%s",
-        (item.id,)
+        "DELETE FROM messages WHERE id=%s AND sender=%s",
+        (item.id, item.username)
     )
+
+    deleted = cur.rowcount
     conn.commit()
+
     cur.close()
     conn.close()
-    return {"message": "Deleted"}
+
+    if deleted == 0:
+        return {"status": "failed", "reason": "Not found or not owner"}
+
+    return {"status": "ok"}
 
 
 # ---------------- SEARCH USERS ----------------
