@@ -88,7 +88,7 @@ def send_message(msg: Message):
 
     message_data = {
         "id": message_id,
-        "sender": msg.sender,]
+        "sender": msg.sender,
         "receiver": msg.receiver,
         "message": msg.message
     }
