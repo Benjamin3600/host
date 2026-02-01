@@ -1,9 +1,28 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from database import get_conn
+from fastapi import WebSocket, WebSocketDisconnect
 
 app = FastAPI()
+class ConnectionManager:
+    def __init__(self):
+        # username → websocket
+        self.active: dict[str, WebSocket] = {}
 
+    async def connect(self, username: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active[username] = websocket
+        print(f"{username} connected (ws)")
+
+    def disconnect(self, username: str):
+        self.active.pop(username, None)
+        print(f"{username} disconnected (ws)")
+
+    async def send_private(self, to_user: str, message: str):
+        ws = self.active.get(to_user)
+        if ws:
+            await ws.send_text(message)
+manager = ConnectionManager()
 # ---------------- MODELS ----------------
 class User(BaseModel):
     username: str
@@ -69,7 +88,7 @@ def send_message(msg: Message):
 
     message_data = {
         "id": message_id,
-        "sender": msg.sender,
+        "sender": msg.sender,]
         "receiver": msg.receiver,
         "message": msg.message
     }
@@ -181,3 +200,34 @@ def add_sent_time():
     cur.close()
     conn.close()
     return {"status": "column added"}
+
+@app.websocket("/ws/chat/{username}")
+async def websocket_chat(websocket: WebSocket, username: str):
+    await manager.connect(username, websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # expected format: receiver:message
+            if ":" not in data:
+                await websocket.send_text("format error: use receiver:message")
+                continue
+
+            receiver, message = data.split(":", 1)
+
+            # 🔹 send live to receiver
+            await manager.send_private(receiver, f"{username}: {message}")
+
+            # 🔹 ALSO store in DB (reuse your logic)
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO messages (sender, receiver, message) VALUES (%s,%s,%s)",
+                (username, receiver, message)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+
+    except WebSocketDisconnect:
+        manager.disconnect(username)
