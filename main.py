@@ -201,24 +201,36 @@ def add_sent_time():
     conn.close()
     return {"status": "column added"}
 
-@app.websocket("/ws/chat/{username}")
-async def websocket_chat(websocket: WebSocket, username: str):
-    await manager.connect(username, websocket)
+@app.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket):
+    # ✅ get username from query param
+    username = websocket.query_params.get("username")
+
+    if not username:
+        # policy violation / bad request
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    manager.active[username] = websocket
+    print(f"{username} connected (ws)")
 
     try:
         while True:
             data = await websocket.receive_text()
+
             # expected format: receiver:message
             if ":" not in data:
-                await websocket.send_text("format error: use receiver:message")
                 continue
 
             receiver, message = data.split(":", 1)
 
-            # 🔹 send live to receiver
-            await manager.send_private(receiver, f"{username}: {message}")
+            # 🔹 send live to receiver if online
+            ws = manager.active.get(receiver)
+            if ws:
+                await ws.send_text(f"{username}:{receiver}:{message}")
 
-            # 🔹 ALSO store in DB (reuse your logic)
+            # 🔹 store in DB
             conn = get_conn()
             cur = conn.cursor()
             cur.execute(
@@ -230,4 +242,7 @@ async def websocket_chat(websocket: WebSocket, username: str):
             conn.close()
 
     except WebSocketDisconnect:
-        manager.disconnect(username)
+        manager.active.pop(username, None)
+        print(f"{username} disconnected (ws)")
+
+
