@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from database import get_conn
 from fastapi import WebSocket, WebSocketDisconnect
-
+import json
 app = FastAPI()
 class ConnectionManager:
     def __init__(self):
@@ -201,48 +201,100 @@ def add_sent_time():
     conn.close()
     return {"status": "column added"}
 
-@app.websocket("/ws/chat")
-async def websocket_chat(websocket: WebSocket):
-    # ✅ get username from query param
-    username = websocket.query_params.get("username")
 
-    if not username:
-        # policy violation / bad request
-        await websocket.close(code=1008)
-        return
 
-    await websocket.accept()
-    manager.active[username] = websocket
-    print(f"{username} connected (ws)")
+@app.websocket("/ws/chat/{username}")
+async def websocket_chat(websocket: WebSocket, username: str):
+    await manager.connect(username, websocket)
 
     try:
         while True:
-            data = await websocket.receive_text()
+            raw = await websocket.receive_text()
+            data = json.loads(raw)
 
-            # expected format: receiver:message
-            if ":" not in data:
-                continue
+            # =========================================
+            # SEND MESSAGE
+            # =========================================
+            if data["type"] == "message":
 
-            receiver, message = data.split(":", 1)
+                receiver = data["receiver"]
+                message = data["message"]
 
-            # 🔹 send live to receiver if online
-            ws = manager.active.get(receiver)
-            if ws:
-                await ws.send_text(f"{username}:{receiver}:{message}")
+                # ---- STORE FIRST ----
+                conn = get_conn()
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO messages (sender, receiver, message)
+                    VALUES (%s, %s, %s)
+                    RETURNING id, sent_time
+                    """,
+                    (username, receiver, message)
+                )
+                msg_id, sent_time = cur.fetchone()
+                conn.commit()
+                cur.close()
+                conn.close()
 
-            # 🔹 store in DB
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO messages (sender, receiver, message) VALUES (%s,%s,%s)",
-                (username, receiver, message)
-            )
-            conn.commit()
-            cur.close()
-            conn.close()
+                payload = {
+                    "type": "message",
+                    "id": msg_id,
+                    "sender": username,
+                    "receiver": receiver,
+                    "message": message,
+                    "sent_time": sent_time.isoformat()
+                }
+
+                # ---- SEND TO RECEIVER ----
+                await manager.send_private(receiver, json.dumps(payload))
+
+                # ---- ALSO SEND BACK TO SENDER ----
+                await manager.send_private(username, json.dumps(payload))
+
+
+            # =========================================
+            # DELETE MESSAGE
+            # =========================================
+            # =========================================
+            elif data["type"] == "delete":
+
+                msg_id = int(data["id"])
+
+                conn = get_conn()
+                cur = conn.cursor()
+
+    # Get receiver BEFORE deleting
+                cur.execute(
+        "SELECT receiver FROM messages WHERE id=%s AND sender=%s",
+        (msg_id, username)
+    )
+                row = cur.fetchone()
+
+                if not row:
+                    cur.close()
+                    conn.close()
+                    continue
+
+                receiver = row[0]
+
+    # Now delete
+                cur.execute(
+        "DELETE FROM messages WHERE id=%s AND sender=%s",
+        (msg_id, username)
+    )
+                conn.commit()
+
+                cur.close()
+                conn.close()
+
+                payload = {
+        "type": "delete",
+        "id": msg_id
+    }
+
+    # Notify BOTH users
+                await manager.send_private(username, json.dumps(payload))
+                await manager.send_private(receiver, json.dumps(payload))
 
     except WebSocketDisconnect:
-        manager.active.pop(username, None)
-        print(f"{username} disconnected (ws)")
-
-
+        manager.disconnect(username)
